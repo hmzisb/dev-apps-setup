@@ -7,14 +7,14 @@ Thanks for helping. Issues and pull requests are welcome.
 - **Keep it small.** Plain bash 3.2 (the macOS `/bin/bash`), no new dependencies
   beyond Homebrew, gum, git and Herd.
 - **Re-runs must be safe.** Every command has to detect finished steps and skip them.
-- **Lint before you push:** `shellcheck synk-mac-apps lib/site-update.sh apps/*.sh`
+- **Lint before you push:** `shellcheck synk-mac-apps lib/*.sh apps/*.sh`
   and `php -l lib/LocalValetDriver.php`. CI runs the same checks.
 - **Test on a real Mac with Herd:** `synk-mac-apps --install <app>`, then `--doctor`
   and `--status`.
 
 ## Adding an app
 
-An app must be a static single-page app that builds from a public Git repository.
+Most apps are static single-page apps that build from a public Git repository.
 Create `apps/<app>.sh`:
 
 ```bash
@@ -38,6 +38,41 @@ build() {                          # runs in src/; build into "$1"
   runs pages through PHP).
 - Turn off telemetry and paid-service promos where the app allows it, and say in a
   comment what still talks to the internet.
+
+### A server app (PM2)
+
+For an npm package that runs its own server, like n8n. See `apps/n8n.sh`:
+
+```bash
+TITLE="Name"
+ABOUT="One line"
+TYPE=pm2
+PACKAGE=name                        # npm package; --update installs its newest version
+SCRIPT=node_modules/name/bin/name   # what PM2 runs, inside the npm install folder
+DOMAIN=name
+PORT=5678                           # the app listens on 127.0.0.1:PORT
+NODE=24
+SQLITE=.name/database.sqlite        # optional; in $DATA, copied before each update
+app_env() {                         # the app's environment, KEY=value lines; $1 is the domain
+    echo "PORT=$PORT"
+    echo "DATA_DIR=$DATA"           # keep data in $DATA so an uninstall leaves it
+}
+```
+
+A server that is a single binary rather than an npm package leaves out `PACKAGE` and
+`NODE` and defines two functions instead. See `apps/mailpit.sh`:
+
+```bash
+SCRIPT=name                         # the binary, inside the release folder
+latest_version() { ...; }           # prints the newest version, like 1.2.3
+install_version() { ...; }          # $1 version, $2 folder: puts the release there
+EXTRA_PORTS=1025                    # optional; other ports it listens on
+IDLE=3600                           # optional; stop after this many seconds without
+                                    # connections to its ports or changes in $DATA
+```
+
+The app must bind to `127.0.0.1` only. Herd's proxy adds HTTPS and forwards
+websockets.
 
 ## How the driver serves files
 
