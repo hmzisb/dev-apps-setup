@@ -141,11 +141,12 @@ n8n and Mailpit are servers, not sets of files, so they work differently:
 - **When they run.** A LaunchAgent starts them when Herd starts. Nothing starts them
   at boot: after a restart they come back only when Herd opens (right away if Herd
   opens at login). Quitting Herd doesn't stop them.
-  - **n8n** keeps running until you shut down or restart the Mac.
-  - **Mailpit** stops itself after an hour with no new mail and no inbox tab open,
-    and starts again the next time Herd starts. To start it sooner, run
-    `synk-mac-apps --install mailpit`. While it is stopped, apps that send mail get
-    "connection refused".
+  - Each one stops itself after an idle hour and starts again the next time Herd
+    starts. To start one sooner, run `synk-mac-apps --install <app>`.
+  - **n8n** is idle with no editor tab open, no webhook call and no workflow run.
+    While it is stopped, schedule triggers don't fire and webhooks get 502.
+  - **Mailpit** is idle with no new mail and no inbox tab open. While it is stopped,
+    apps that send mail get "connection refused".
 - **Updates.** Only when you run `synk-mac-apps --update <app>`. A new version may
   change its database, so the update first saves a copy of it
   (`<database>.before-<version>`), keeps the previous version, and restarts the app.
@@ -208,7 +209,7 @@ synk-mac-apps              the CLI
 apps/<app>.sh              one manifest per app: what to clone, how to build it
 lib/site-update.sh         builds and deploys a new version of one app
 lib/LocalValetDriver.php   Herd driver shared by every app
-lib/idle-exit.sh           stops an idle server app (Mailpit)
+lib/idle-exit.sh           stops an idle server app
 active-setup/              git-ignored; everything generated lives here
   sites/<app>/
     src/                   git clone of the app

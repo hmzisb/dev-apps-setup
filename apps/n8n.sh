@@ -8,6 +8,10 @@ SCRIPT=node_modules/n8n/bin/n8n    # in the npm install folder
 DOMAIN=n8n
 PORT=5678
 NODE=24                            # n8n 2.x needs Node >= 24
+# Stop after an hour with no open editor tab, no webhook call and no workflow run (a
+# run writes to the database). The task runner's own link is on 5679, not watched.
+# While stopped, schedule triggers don't fire and webhooks get 502.
+IDLE=3600
 SQLITE=.n8n/database.sqlite        # in $DATA; copied before every update
 # The app's environment, one KEY=value per line; $1 is the domain. Workflows,
 # credentials and the key that encrypts them live in $DATA/.n8n.

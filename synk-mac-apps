@@ -172,11 +172,11 @@ install_app() { # $1 app, $2 domain (optional): install, or repair an installed 
     wait_live "$domain" 10
 }
 
-wait_live() { # $1 domain, $2 seconds to wait for an answer other than 000 or 502
+wait_live() { # $1 domain, $2 seconds to wait for an answer other than 000, 404 or 502
     # herd link/secure/proxy reload nginx, which refuses connections for a moment,
-    # and a server app answers 502 until it has started.
+    # and a server app answers 502 until it listens (n8n then 404 until its editor loads).
     local code try=1
-    while code=$(http_code "$1"); [ "$code" = 000 ] || [ "$code" = 502 ]; do
+    while code=$(http_code "$1"); [ "$code" = 000 ] || [ "$code" = 404 ] || [ "$code" = 502 ]; do
         [ $try -lt "$2" ] || break
         try=$((try + 1)); sleep 1
     done
@@ -218,7 +218,10 @@ pm2_state() { # $1 app: online, stopped, errored...; empty when PM2 or the app i
     pm2 jlist 2>/dev/null | "$PM2_BIN" -e '
         let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
             const a = JSON.parse(s || "[]").find(x => x.name === process.argv[1]);
-            console.log(a ? a.pm2_env.status : "");
+            // An exit in stop_exit_codes (0) is a stop, but with restart_delay set PM2
+            // still labels it "waiting restart" without scheduling one.
+            const e = a && a.pm2_env;
+            console.log(!e ? "" : e.status === "waiting restart" && e.exit_code === 0 ? "stopped" : e.status);
         });' "$1"
 }
 pm2_online() { [ "$(pm2_state "$APP")" = online ]; }
@@ -325,6 +328,9 @@ install_pm2() { # $1 domain, manifest loaded: install or repair a server app
         fi
     done
     if [ "$state" != online ] || [ -n "$ECO_CHANGED" ]; then
+        # A restart keeps an app's old script path, so a changed definition (IDLE added
+        # or removed) needs a fresh start.
+        if [ -n "$ECO_CHANGED" ] && [ -n "$state" ]; then pm2 delete "$APP" >/dev/null; fi
         pm2 startOrRestart "$SITE/ecosystem.json" >/dev/null || { fail "$TITLE: PM2 could not start it"; return 1; }
     fi
     proxied_here "$domain" || "$HERD" proxy "$domain" "http://127.0.0.1:$PORT" --secure >/dev/null ||
