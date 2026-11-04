@@ -59,6 +59,7 @@ schemas into a website, and don't want Docker running for a whiteboard.
 | App | Default URL | What it's for | Upstream license |
 |---|---|---|---|
 | [ChartDB](https://github.com/chartdb/chartdb) | `https://chartdb.test` | Database schema diagrams from a SQL query | AGPL-3.0 |
+| [draw.io](https://github.com/jgraph/drawio) | `https://drawio.test` | Flowcharts, UML, network and other diagrams | Apache-2.0 |
 | [drawDB](https://github.com/drawdb-io/drawdb) | `https://drawdb.test` | Drag-and-drop database diagrams | AGPL-3.0 |
 | [Excalidraw](https://github.com/excalidraw/excalidraw) | `https://draw.test` | Hand-drawn style whiteboard | MIT |
 | [JSON Crack](https://github.com/AykutSarac/jsoncrack.com) | `https://jsoncrack.test` | JSON, YAML, CSV and XML as interactive graphs | Apache-2.0 |
@@ -186,6 +187,10 @@ for each domain.
 
 Excalidraw's share links, libraries and live collaboration still use excalidraw.com's
 free services. Its tracking and error reporting are turned off.
+**draw.io** saves each diagram as a `.drawio` file on your Mac or in the browser,
+whichever you pick when you save. Its Google Drive, OneDrive and similar logins and
+its server-side export need draw.io's Java servlets, which aren't installed, so
+PDF export goes through the print dialog.
 **JSON Crack** keeps what you paste only for the current tab (sessionStorage), so
 save anything you need with **File > Export**. Its text editor downloads its code
 from unpkg.com, but your data stays in the browser.
