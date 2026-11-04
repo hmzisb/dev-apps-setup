@@ -1,3 +1,4 @@
 # Manifests (apps/*.sh) are sourced by bash and only set variables the CLI reads.
+# SC2015: "a && b || fail" is used on purpose; either step failing means fail.
 shell=bash
-disable=SC1090,SC1091,SC2034
+disable=SC1090,SC1091,SC2034,SC2015

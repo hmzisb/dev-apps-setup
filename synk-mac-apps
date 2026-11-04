@@ -138,7 +138,6 @@ install_app() { # $1 app, $2 domain (optional): install, or repair an installed 
     mkdir -p "$SITE"
     if [ ! -d "$SITE/src/.git" ]; then
         rm -rf "$SITE/src" "$SITE/src.tmp"
-        # shellcheck disable=SC2015 # a failed clone or a failed mv both mean fail
         spin "Cloning $REPO_URL" git clone -q --depth 1 "$REPO_URL" "$SITE/src.tmp" &&
             mv "$SITE/src.tmp" "$SITE/src" || { fail "$TITLE: clone failed"; return 1; }
     fi
