@@ -55,6 +55,7 @@ fi
 exec >> "$STATE/update.log" 2>&1
 
 # PHP-FPM starts this with an empty environment.
+# shellcheck disable=SC2116 # echo ~ reads the home from the user database when HOME is unset
 export HOME="${HOME:-$(echo ~)}" PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60
 # Keep husky from pointing the checkout's git hooks at its own scripts.
@@ -112,7 +113,9 @@ else
 fi
 if [ -n "$STORAGE" ]; then
     # Exit 1 means the files differ; 128 (old version not fetched locally) means unknown, so stay quiet.
-    rc=0; git -C src diff --quiet "$deployed" HEAD -- $STORAGE 2>/dev/null || rc=$?
+    rc=0
+    # shellcheck disable=SC2086 # STORAGE may list several paths
+    git -C src diff --quiet "$deployed" HEAD -- $STORAGE 2>/dev/null || rc=$?
     if [ "$rc" = 1 ]; then
         log "note: $latest may upgrade the browser storage schema; rolling back to $deployed afterwards may not open your data"
     fi

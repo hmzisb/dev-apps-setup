@@ -1,0 +1,11 @@
+name: lint
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck synk-mac-apps lib/site-update.sh apps/*.sh
+      - run: php -l lib/LocalValetDriver.php
