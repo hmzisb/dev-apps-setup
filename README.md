@@ -61,6 +61,7 @@ schemas into a website, and don't want Docker running for a whiteboard.
 | [ChartDB](https://github.com/chartdb/chartdb) | `https://chartdb.test` | Database schema diagrams from a SQL query | AGPL-3.0 |
 | [drawDB](https://github.com/drawdb-io/drawdb) | `https://drawdb.test` | Drag-and-drop database diagrams | AGPL-3.0 |
 | [Excalidraw](https://github.com/excalidraw/excalidraw) | `https://draw.test` | Hand-drawn style whiteboard | MIT |
+| [JSON Crack](https://github.com/AykutSarac/jsoncrack.com) | `https://jsoncrack.test` | JSON, YAML, CSV and XML as interactive graphs | Apache-2.0 |
 | [Mailpit](https://github.com/axllent/mailpit) | `https://mailpit.test` | Catches mail from local apps (a server, see below) | MIT |
 | [Mermaid Live Editor](https://github.com/mermaid-js/mermaid-live-editor) | `https://flow.test` | Diagrams from text | MIT |
 | [n8n](https://github.com/n8n-io/n8n) | `https://n8n.test` | Workflow automation (a server, see below) | [Sustainable Use](https://docs.n8n.io/sustainable-use-license/) |
@@ -185,6 +186,9 @@ for each domain.
 
 Excalidraw's share links, libraries and live collaboration still use excalidraw.com's
 free services. Its tracking and error reporting are turned off.
+**JSON Crack** keeps what you paste only for the current tab (sessionStorage), so
+save anything you need with **File > Export**. Its text editor downloads its code
+from unpkg.com, but your data stays in the browser.
 
 **n8n** keeps its workflows, credentials and the key that encrypts them in
 `~/.synk-mac-apps/data/n8n/.n8n`, not in the browser. Uninstalling keeps that folder,
