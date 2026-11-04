@@ -1,34 +1,57 @@
 # dev-apps-setup
 
-**Self-host open-source web tools on your Mac in one command.** No Docker, no
-background daemons.
+**Your open-source diagram tools, running on your own Mac. Set them up once, and
+any Mac after that is one command away.**
 
 [![lint](https://github.com/hmzisb/dev-apps-setup/actions/workflows/lint.yml/badge.svg)](https://github.com/hmzisb/dev-apps-setup/actions/workflows/lint.yml)
 [![License: CC0-1.0](https://img.shields.io/badge/license-CC0--1.0-blue.svg)](LICENSE)
 ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 ![Bash 3.2](https://img.shields.io/badge/bash-3.2-4EAA25.svg)
 
-`synk-mac-apps` builds diagram and whiteboard apps from their source code and serves
-them through [Laravel Herd](https://herd.laravel.com) at `https://<name>.test`. Each
-app updates itself weekly. Clone this repo on a new Mac, run one command, and the
-same setup is back.
+You use Excalidraw, Mermaid, drawDB or ChartDB for real work. The hosted versions
+are one tab away, but they're someone else's website: you paste your company's
+database schema into a page you don't control, you click past promo banners, and if
+it changes or goes down, your workflow does too. Self-hosting fixes that, but the
+official route is Docker, a VM using memory all day just for a whiteboard. So you
+build the apps yourself and lose an afternoon: an `.nvmrc` with the wrong Node
+version, a package manager that new Node no longer ships, an install script that
+rewrites your git config, tracking switches hidden in env files. It finally works,
+and then you never update it. Months later you get a new Mac and have to work it all
+out again, because none of it was written down.
+
+**This repo is that afternoon, written down as code.** One command builds each app
+from source, serves it at a stable address like `https://draw.test` through
+[Laravel Herd](https://herd.laravel.com), and keeps it up to date by itself.
 
 ```bash
 git clone https://github.com/hmzisb/dev-apps-setup.git ~/dev-apps-setup
 ~/dev-apps-setup/synk-mac-apps --setup
 ```
 
-## ✨ Why
+## 💡 Why not just reinstall when you need it?
 
-- 🔒 **Private by default.** Your diagrams stay in your browser on your machine.
-- 🪶 **Light.** Herd serves plain static files. Nothing runs in the background until
-  you open a page.
-- 🔁 **Always current.** Each app builds its newest release once a week, the
-  first time you open it. A failed build never takes the site down.
-- 🧳 **Portable.** One Git repo holds the whole setup. Recreating it on a new Mac
-  takes one command.
-- 🧯 **Safe to re-run.** Every command skips steps that are already done and repairs
-  anything that drifted.
+Because installing isn't the hard part.
+
+- 🧠 **Knowing how is the hard part.** Each app has its own build problems. Each
+  one is solved once, in a short manifest with a comment that says why, so you
+  never look it up again.
+- 🔗 **Your diagrams belong to the address.** These apps save your work in the
+  browser, separately for each domain. Reinstall on a new `localhost` port and your
+  work seems gone. Here every app keeps the same domain, so your diagrams are where
+  you left them, even after a reinstall.
+- 🔁 **Builds you made by hand go stale.** Each app here builds its newest release
+  once a week, the first time you open it. A failed build never takes the site down.
+- 🔒 **Private work stays on your Mac.** Schemas, architecture sketches and internal
+  flows stay local. No account, and no hosted copy you have to trust.
+- 🪶 **No Docker, nothing in the background.** Herd serves plain files, and nothing
+  runs until you open a tab. `https://draw.test` works from a bookmark, unlike a
+  `localhost:5173` that only answers while a dev server is up.
+- 🧳 **A new Mac takes one command.** Re-running it is always safe: finished steps
+  are skipped, and anything that drifted is repaired.
+
+**Who it's for:** developers on a Mac, especially if you already use Laravel Herd,
+who use browser-based diagram tools for real work, would rather not paste internal
+schemas into a website, and don't want Docker running for a whiteboard.
 
 ## 📦 Apps
 
