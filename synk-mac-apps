@@ -1,0 +1,357 @@
+#!/bin/bash
+# synk-mac-apps: installs and maintains the local web apps described in apps/*.sh,
+# each built from source and served by Laravel Herd at https://<domain>.test.
+# Everything it creates lives in active-setup/ (git-ignored). Run with --help.
+# Plain /bin/bash 3.2: no associative arrays or mapfile.
+set -uo pipefail
+
+REPO=$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)
+SITES="$REPO/active-setup/sites"
+HERD_HOME="$HOME/Library/Application Support/Herd"
+HERD="$HERD_HOME/bin/herd"
+HERD_LINKS="$HERD_HOME/config/valet/Sites"
+HERD_CERTS="$HERD_HOME/config/valet/Certificates"
+NVM_SH="$HERD_HOME/config/nvm/nvm.sh"
+YES=
+PROBLEMS=0
+
+usage() {
+    cat <<EOF
+Usage: synk-mac-apps <command> [app] [options]
+
+Commands:
+  --setup                 Interactive wizard: prerequisites (Homebrew, gum, Herd),
+                          then install, keep, move or remove each app
+  --status                Installed apps, versions, last update and HTTP check
+  --doctor                Check prerequisites and every installed app; exit 1 on problems
+  --update [app|all]      Check for and build new versions now (default: all installed)
+  --install [app]         Install or repair an app (asks which when no app is given)
+      --domain <name>     Serve it at https://<name>.test (default: manifest or current)
+  --uninstall [app]       Remove an app, its build and its Herd link
+      -y, --yes           Don't ask for confirmation
+  --list                  Apps this repo knows about
+  -h, --help              This help
+
+Apps: $(apps | xargs)
+Re-running any command is safe: finished steps are detected and skipped.
+EOF
+}
+
+# ---- UI: gum on a terminal, plain shell otherwise ----
+# stdin and stderr: choose/ask run inside $(...), and gum draws its UI on stderr.
+tty_ok() { [ -t 0 ] && [ -t 2 ]; }
+gum_ok() { tty_ok && command -v gum >/dev/null 2>&1; }
+style() { # $1 colour, rest text
+    local c=$1; shift
+    if gum_ok; then gum style --foreground "$c" "$*"; else printf '%s\n' "$*"; fi
+}
+info() { style 212 "$*"; }
+ok() { style 2 "✓ $*"; }
+warn() { style 3 "! $*"; }
+fail() { style 1 "✗ $*"; PROBLEMS=1; }
+die() { echo "synk-mac-apps: $*" >&2; exit 1; }
+header() {
+    if gum_ok; then gum style --border rounded --padding "0 2" --border-foreground 212 "$@"
+    else printf '\n== %s ==\n' "$*"; fi
+}
+confirm() { # $1 question; no by default, and always no without a terminal unless --yes
+    [ -n "$YES" ] && return 0
+    tty_ok || return 1
+    if gum_ok; then gum confirm "$1"
+    else local r; read -r -p "$1 [y/N] " r; [[ $r =~ ^[Yy] ]]; fi
+}
+ask() { # $1 prompt, $2 default; prints the answer
+    if gum_ok; then gum input --prompt "$1: " --value "$2"
+    else local r; read -r -p "$1 [$2]: " r; echo "${r:-$2}"; fi
+}
+choose() { # $1 header, rest options; prints the choice
+    if gum_ok; then gum choose --header "$1" "${@:2}"
+    else
+        local o; echo "$1" >&2
+        select o in "${@:2}"; do [ -n "$o" ] && { echo "$o"; return; }; done
+        return 1
+    fi
+}
+spin() { # $1 title, rest an executable (not a function) and its arguments
+    if gum_ok; then gum spin --spinner dot --title "$1" -- "${@:2}"
+    else echo "$1..."; "${@:2}"; fi
+}
+
+# ---- Apps ----
+apps() { local f; for f in "$REPO"/apps/*.sh; do basename "$f" .sh; done; }
+installed() { [ -f "$SITES/$1/domain" ]; }
+load() { # $1 app: loads its manifest and sets APP, SITE and INSTALLED_DOMAIN
+    [ -f "$REPO/apps/$1.sh" ] || die "unknown app '$1' (known: $(apps | xargs))"
+    unset -f build
+    TITLE='' ABOUT='' REPO_URL='' DOMAIN='' SOURCE='' STORAGE='' NODE='' ROOT_REDIRECT=''
+    source "$REPO/apps/$1.sh"
+    APP=$1 SITE="$SITES/$1"
+    INSTALLED_DOMAIN=$(cat "$SITE/domain" 2>/dev/null || true)
+}
+http_code() { curl -s -L -o /dev/null -m 10 -w '%{http_code}' "https://$1.test/"; }
+linked_here() { [ "$(readlink "$HERD_LINKS/$1" 2>/dev/null)" = "$SITE" ]; }
+# Herd's dnsmasq answers every *.test name, so only the HTTP code shows whether a
+# name is taken: Herd's own 404 page (or no answer) means free.
+domain_free() { # $1 domain: unused, or already this app's
+    if [ -L "$HERD_LINKS/$1" ]; then linked_here "$1"; return; fi
+    local code; code=$(curl -sk -o /dev/null -m 5 -w '%{http_code}' "https://$1.test/")
+    [ "$code" = 000 ] || [ "$code" = 404 ]
+}
+unlink_domain() { # $1 domain; only touches a Herd link that points at this app
+    linked_here "$1" || return 0
+    "$HERD" unlink "$1" >/dev/null
+    if [ -f "$HERD_CERTS/$1.test.crt" ]; then "$HERD" unsecure "$1" >/dev/null; fi
+}
+unlink_others() { # $1 domain to keep (empty: none); every other Herd link to this app
+    local l
+    for l in "$HERD_LINKS"/*; do
+        [ "$(basename "$l")" = "$1" ] || unlink_domain "$(basename "$l")"
+    done
+}
+update_running() { # site-update.sh holds an flock on update.lock while it runs
+    local lock="$SITE/.auto-update/update.lock"
+    [ -f "$lock" ] && ! /usr/bin/perl -MFcntl=:flock -e 'open(my $l, "<", shift) or exit 1; flock($l, LOCK_EX | LOCK_NB) or exit 1' "$lock"
+}
+need_herd() { [ -x "$HERD" ] && [ -f "$NVM_SH" ] || die "Herd (with Node) is not set up; run: synk-mac-apps --setup"; }
+
+run_update() { # $1 app, manifest loaded: check for and build a new version now
+    local log="$SITE/.auto-update/update.log" start rc
+    start=$(date '+%F %T')
+    spin "Checking $TITLE for a new version (a build takes a few minutes)" "$REPO/lib/site-update.sh" "$1"; rc=$?
+    # The update's own log lines from this run (build output is untimestamped).
+    [ -f "$log" ] && awk -v t="$start" '/^[0-9]{4}-[0-9]{2}-[0-9]{2} / && $0 >= t { print "  " $0 }' "$log"
+    if [ $rc -ne 0 ]; then
+        fail "$TITLE update failed; last lines of $log:"
+        tail -n 15 "$log" | sed 's/^/    /'
+        return 1
+    fi
+}
+
+install_app() { # $1 app, $2 domain (optional): install, or repair an installed app
+    load "$1"
+    local domain=${2:-${INSTALLED_DOMAIN:-$DOMAIN}} code
+    domain=$(printf '%s' "${domain%.test}" | tr '[:upper:]' '[:lower:]')
+    [[ $domain =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || { fail "$TITLE: '$domain' is not a valid name"; return 1; }
+    domain_free "$domain" || { fail "$TITLE: https://$domain.test is already used by another site"; return 1; }
+    info "$TITLE → https://$domain.test"
+
+    mkdir -p "$SITE"
+    if [ ! -d "$SITE/src/.git" ]; then
+        rm -rf "$SITE/src" "$SITE/src.tmp"
+        spin "Cloning $REPO_URL" git clone -q --depth 1 "$REPO_URL" "$SITE/src.tmp" &&
+            mv "$SITE/src.tmp" "$SITE/src" || { fail "$TITLE: clone failed"; return 1; }
+    fi
+    ln -sfn ../../../lib/LocalValetDriver.php "$SITE/LocalValetDriver.php"
+    if [ -n "$ROOT_REDIRECT" ]; then echo "$ROOT_REDIRECT" > "$SITE/root-redirect"; else rm -f "$SITE/root-redirect"; fi
+    if [ ! -f "$SITE/dist/index.html" ]; then run_update "$APP" || return 1; fi
+
+    linked_here "$domain" || (cd "$SITE" && "$HERD" link "$domain" >/dev/null) || { fail "$TITLE: herd link failed"; return 1; }
+    [ -f "$HERD_CERTS/$domain.test.crt" ] || "$HERD" secure "$domain" >/dev/null || { fail "$TITLE: herd secure failed"; return 1; }
+    echo "$domain" > "$SITE/domain"
+    # The old domain after a move, and any link left by an interrupted move.
+    unlink_others "$domain"
+
+    # herd link/secure reload nginx, which refuses connections for a moment.
+    local try
+    for try in 1 2 3 4 5 6 7 8 9 10; do
+        code=$(http_code "$domain")
+        [ "$code" = 000 ] || break
+        sleep 1
+    done
+    if [ "$code" = 200 ]; then ok "$TITLE is live at https://$domain.test"
+    else fail "$TITLE: https://$domain.test answered HTTP $code"; return 1; fi
+}
+
+uninstall_app() { # $1 app
+    load "$1"
+    [ -d "$SITE" ] || { warn "$TITLE is not installed"; return 0; }
+    [ -n "$YES" ] || tty_ok || die "add -y to uninstall without a terminal"
+    confirm "Remove $TITLE${INSTALLED_DOMAIN:+ (https://$INSTALLED_DOMAIN.test)}? Data saved in the browser stays there for a reinstall on the same domain." ||
+        { echo "Kept $TITLE."; return 0; }
+    ! update_running || { fail "$TITLE is updating right now; try again in a few minutes"; return 1; }
+    unlink_others ""
+    rm -rf "${SITE:?}"
+    ok "Removed $TITLE"
+}
+
+pick_app() { # $1 header, $2 "installed" or "available"; prints the app
+    tty_ok || die "name an app: $(apps | xargs)"
+    local a list=()
+    for a in $(apps); do
+        if installed "$a"; then [ "$2" = installed ] && list+=("$a")
+        else [ "$2" = available ] && list+=("$a"); fi
+    done
+    [ ${#list[@]} -gt 0 ] || die "no $2 apps"
+    choose "$1" "${list[@]}"
+}
+
+list() {
+    local a
+    for a in $(apps); do
+        load "$a"
+        printf '%s\t%s\t%s\n' "$a" "$ABOUT" "$(installed "$a" && echo "https://$INSTALLED_DOMAIN.test" || echo "default $DOMAIN.test")"
+    done | column -t -s $'\t'
+}
+
+status() {
+    local a
+    {
+        printf 'APP\tURL\tVERSION\tUPDATED\tCHECKED\tHTTP\n'
+        for a in $(apps); do
+            load "$a"
+            if ! installed "$a"; then printf '%s\t-\tnot installed\t-\t-\t-\n' "$a"; continue; fi
+            printf '%s\thttps://%s.test\t%s\t%s\t%s\t%s\n' "$a" "$INSTALLED_DOMAIN" \
+                "$(basename "$(readlink "$SITE/dist")")" \
+                "$(cut -d' ' -f2 "$SITE/.auto-update/last-updated" 2>/dev/null || echo -)" \
+                "$(cut -c1-10 "$SITE/.auto-update/last-check" 2>/dev/null || echo -)" \
+                "$(http_code "$INSTALLED_DOMAIN")"
+        done
+    } | column -t -s $'\t'
+}
+
+# ---- Doctor ----
+check() { # $1 description, rest a command that succeeds when all is well
+    if "${@:2}" >/dev/null 2>&1; then ok "$1"; else fail "$1"; fi
+}
+command_linked() { [ "$(readlink -f "$(command -v synk-mac-apps)")" = "$REPO/synk-mac-apps" ]; }
+src_clean() { [ -z "$(git -C "$SITE/src" status --porcelain)" ]; }
+driver_linked() { [ "$(readlink -f "$SITE/LocalValetDriver.php")" = "$REPO/lib/LocalValetDriver.php" ]; }
+serves() { [ "$(http_code "$1")" = 200 ]; }
+last_update_ok() { ! grep '^[0-9]\{4\}-' "$SITE/.auto-update/update.log" | tail -1 | grep -q FAILED; }
+
+doctor() {
+    local a d
+    header "Prerequisites"
+    check "Homebrew" command -v brew
+    check "gum" command -v gum
+    check "git" git --version
+    check "Herd" test -x "$HERD"
+    check "Herd's Node (nvm)" test -f "$NVM_SH"
+    check "synk-mac-apps command points at $REPO" command_linked
+    for a in $(apps); do
+        load "$a"
+        if ! installed "$a"; then
+            [ -d "$SITE" ] && warn "$a: half installed; run synk-mac-apps --install $a"
+            continue
+        fi
+        d=$INSTALLED_DOMAIN
+        header "$TITLE (https://$d.test)"
+        check "source checkout is clean" src_clean
+        check "driver links to lib/" driver_linked
+        check "Herd links $d.test here" linked_here "$d"
+        check "HTTPS certificate" test -f "$HERD_CERTS/$d.test.crt"
+        check "live build $(basename "$(readlink "$SITE/dist")")" test -f "$SITE/dist/index.html"
+        check "serves HTTP 200" serves "$d"
+        check "last update did not fail" last_update_ok
+    done
+    for d in "$SITES"/*; do
+        [ -d "$d" ] && [ ! -f "$REPO/apps/$(basename "$d").sh" ] && warn "$d has no manifest in apps/"
+    done
+    if [ $PROBLEMS = 0 ]; then echo; ok "All good"; else echo; fail "Problems found; synk-mac-apps --install <app> repairs most"; fi
+    return $PROBLEMS
+}
+
+# ---- Setup ----
+brew_env() {
+    command -v brew >/dev/null && return
+    local b
+    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        [ -x "$b" ] && { eval "$("$b" shellenv)"; return; }
+    done
+    return 1
+}
+
+ensure_prereqs() {
+    header "Prerequisites"
+    if ! brew_env; then
+        confirm "Homebrew is missing. Install it with its official installer?" || { fail "Homebrew is required"; return 1; }
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && brew_env || return 1
+    fi
+    ok "Homebrew"
+    command -v gum >/dev/null || brew install gum || return 1
+    ok "gum"
+    git --version >/dev/null 2>&1 || brew install git || return 1
+    ok "git"
+    if [ ! -x "$HERD" ]; then
+        confirm "Laravel Herd (nginx, dnsmasq, PHP and Node behind *.test) is missing. Install it?" ||
+            { fail "Herd is required"; return 1; }
+        brew install --cask herd || return 1
+        open -a Herd
+        info "Finish Herd's first-run setup in its window (it asks for your password once)."
+    fi
+    until [ -x "$HERD" ] && [ -d "$HERD_LINKS" ]; do confirm "Has Herd finished its setup?" || return 1; done
+    ok "Herd"
+    until [ -f "$NVM_SH" ]; do
+        info "Turn on Node in Herd > Settings > Node; its nvm builds the apps."
+        confirm "Done?" || return 1
+    done
+    ok "Herd's Node"
+    local bin; bin="$(brew --prefix)/bin/synk-mac-apps"
+    if [ -e "$bin" ] && [ ! -L "$bin" ]; then warn "$bin exists and is not a link; left alone"
+    else ln -sfn "$REPO/synk-mac-apps" "$bin" && ok "synk-mac-apps command"; fi
+}
+
+setup() {
+    tty_ok || die "--setup is interactive; use --install <app> in scripts"
+    header "synk-mac-apps setup" "Local web apps built from source, served by Herd at https://<name>.test"
+    ensure_prereqs || return 1
+    local a d
+    for a in $(apps); do
+        load "$a"
+        echo; info "$TITLE: $ABOUT"
+        if installed "$a"; then
+            case $(choose "Installed at https://$INSTALLED_DOMAIN.test" "Keep (check and repair)" "Update now" "Change domain" "Uninstall") in
+                Keep*) install_app "$a" ;;
+                "Update now") run_update "$a" ;;
+                "Change domain") d=$(ask "Domain (.test is added)" "$INSTALLED_DOMAIN") && install_app "$a" "$d" ;;
+                Uninstall) uninstall_app "$a" ;;
+            esac
+        else
+            case $(choose "Install $TITLE?" "Install" "Skip") in
+                Install) d=$(ask "Domain (.test is added)" "$DOMAIN") && install_app "$a" "$d" ;;
+            esac
+        fi
+    done
+    echo; header "Status"; status
+}
+
+main() {
+    local cmd=${1:---help} app='' domain='' a rc=0
+    [ $# -gt 0 ] && shift
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --domain) [ $# -ge 2 ] || die "--domain needs a name"; domain=$2; shift 2 ;;
+            --domain=*) domain=${1#*=}; shift ;;
+            -y|--yes) YES=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *) app=$1; shift ;;
+        esac
+    done
+    case $cmd in
+        --setup) setup ;;
+        --status) status ;;
+        --doctor) doctor ;;
+        --list) list ;;
+        --update)
+            need_herd
+            if [ -z "$app" ] || [ "$app" = all ]; then app=$(for a in $(apps); do installed "$a" && echo "$a"; done)
+            else installed "$app" || die "$app is not installed"; fi
+            [ -n "$app" ] || die "no apps installed; run synk-mac-apps --setup"
+            for a in $app; do load "$a"; run_update "$a" || rc=1; done
+            return $rc ;;
+        --install)
+            need_herd
+            [ -n "$app" ] || app=$(pick_app "Install which app?" available) || exit 1
+            if [ -z "$domain" ] && tty_ok && ! installed "$app"; then
+                load "$app"; domain=$(ask "Domain for $TITLE (.test is added)" "$DOMAIN") || exit 1
+            fi
+            install_app "$app" "$domain" ;;
+        --uninstall)
+            [ -n "$app" ] || app=$(pick_app "Uninstall which app?" installed) || exit 1
+            uninstall_app "$app" ;;
+        -h|--help) usage ;;
+        *) usage >&2; exit 1 ;;
+    esac
+}
+
+main "$@"
